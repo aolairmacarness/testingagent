@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 import { db } from "@/db";
 import { cookies } from "next/headers";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { TestCasesTable, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -11,61 +12,43 @@ const anthropic = new Anthropic({
 });
 
 const ALLOWED_EXTENSIONS = [
-    ".js",
-    ".jsx",
-    ".ts",
-    ".tsx",
-    ".json",
-    ".md",
+    ".js", ".jsx", ".mjs", ".ts", ".tsx", ".vue", ".svelte", ".html",
+    ".py", ".rb", ".php", ".java", ".kt", ".go", ".rs", ".cs",
+    ".json", ".md",
 ];
 
-const IMPORTANT_FILES = [
-    "package.json",
-    "next.config",
-    "middleware",
-    "app/",
-    "pages/",
-    "components/",
-    "src/",
-    "lib/",
-    "utils/",
-    "actions/",
-    "api/",
-    "server/",
+// Matched against whole path segments, not substrings
+const IGNORE_DIRS = new Set([
+    "node_modules", ".next", "dist", "build", ".git", ".github", "coverage",
+    "public", "vendor", "__pycache__", ".venv", "venv", "out", "target",
+]);
+
+const IGNORE_FILES = new Set([
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "tsconfig.json",
+    "tsconfig.tsbuildinfo",
+]);
+
+const IMPORTANT_HINTS = [
+    "package.json", "next.config", "middleware", "proxy.",
+    "app/", "pages/", "components/", "src/", "lib/", "utils/",
+    "actions/", "api/", "server/", "routes/", "views/", "templates/",
 ];
 
-const IGNORE_PATHS = [
-    "node_modules",
-    ".next",
-    "dist",
-    "build",
-    ".git",
-    "coverage",
-    "public/",
-    "package-lock.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".svg",
-    ".webp",
-    ".mp4",
-    ".mov",
-];
+function isCandidateFile(path: string) {
+    const parts = path.split("/");
+    const name = parts[parts.length - 1];
+    if (parts.slice(0, -1).some((dir) => IGNORE_DIRS.has(dir))) return false;
+    if (IGNORE_FILES.has(name)) return false;
+    if (name.endsWith(".min.js") || name.endsWith(".d.ts")) return false;
+    return ALLOWED_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
 
-function isUsefulFile(path: string) {
-    const isIgnored = IGNORE_PATHS.some((item) => path.includes(item));
-
-    const isAllowedExtension = ALLOWED_EXTENSIONS.some((ext) =>
-        path.endsWith(ext)
-    );
-
-    const isImportantPath = IMPORTANT_FILES.some((item) =>
-        path.includes(item)
-    );
-
-    return !isIgnored && isAllowedExtension && isImportantPath;
+function importanceScore(path: string) {
+    let score = IMPORTANT_HINTS.some((hint) => path.includes(hint)) ? 10 : 0;
+    if (/(^|\/)(page|route|layout)\.(t|j)sx?$/.test(path)) score += 5;
+    if (path.endsWith(".md")) score -= 5;
+    if (path.endsWith(".json") && !path.endsWith("package.json")) score -= 5;
+    return score;
 }
 
 async function getRepoTree({
@@ -97,7 +80,8 @@ async function getRepoTree({
 
     return data.tree
         .filter((item: any) => item.type === "blob")
-        .filter((item: any) => isUsefulFile(item.path))
+        .filter((item: any) => isCandidateFile(item.path))
+        .sort((x: any, y: any) => importanceScore(y.path) - importanceScore(x.path))
         .slice(0, 25);
 }
 
@@ -146,7 +130,19 @@ export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
         const cookiesStore = await cookies();
-        const githubToken = cookiesStore.get('gh_token')?.value;
+        let githubToken = cookiesStore.get('gh_token')?.value;
+
+        // Fall back to the GitHub token Clerk holds for a GitHub-signed-in user
+        if (!githubToken) {
+            try {
+                const { userId: clerkId } = await auth();
+                if (clerkId) {
+                    const client = await clerkClient();
+                    const res = await client.users.getUserOauthAccessToken(clerkId, 'github');
+                    githubToken = res.data[0]?.token;
+                }
+            } catch { }
+        }
 
         const {
             userId,
@@ -156,13 +152,15 @@ export async function POST(req: NextRequest) {
             branch = "main",
         } = body;
 
-        if (!userId || !owner || !repo || !githubToken) {
+        if (!githubToken) {
             return NextResponse.json(
-                {
-                    error: "userId, owner, repo and githubToken are required",
-                },
-                { status: 400 }
+                { error: "GitHub is not connected. Click Setup to connect GitHub, then try again." },
+                { status: 401 }
             );
+        }
+        if (!userId || !owner || !repo) {
+            const missing = [!userId && "userId", !owner && "owner", !repo && "repo"].filter(Boolean).join(", ");
+            return NextResponse.json({ error: `Missing required fields: ${missing}` }, { status: 400 });
         }
 
         // Check user credits
@@ -254,6 +252,7 @@ Important rules:
 - Do not invent fake target files.
 - If route is unclear, infer from Next.js app/page structure.
 - Keep description short, only one line.
+- You MUST respond by calling the save_test_cases tool with all test cases. Do not reply with plain text.
 `;
 
         // Force a tool call so the response is schema-shaped JSON
@@ -313,7 +312,7 @@ Important rules:
                     },
                 },
             ],
-            tool_choice: { type: "tool", name: "save_test_cases" },
+            tool_choice: { type: "auto" },
         });
 
         const toolUse = response.content.find((block) => block.type === "tool_use");

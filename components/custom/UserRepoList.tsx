@@ -12,7 +12,7 @@ import { Button } from '../ui/button'
 import axios from 'axios'
 import { UserDetailContext } from '@/context/UserDetailContext'
 import TestCaseList from './TestCaseList'
-import RepoSettings from './RepoSettings'
+import RepoSettings from './RepoSetting'
 import test from 'node:test'
 type props = {
     repoList: UserRepo[],
@@ -112,12 +112,14 @@ function UserRepoList({ repoList, setReload }: props) {
             <Accordion type="single" collapsible
                 onValueChange={(value) => GetTestCases(Number(value))}
             >
-                {repoList.map((repo, index) => (
+                {repoList
+                    .filter((r, i, arr) => arr.findIndex(x => x.repoId === r.repoId) === i)
+                    .map((repo) => (
 
-                    <AccordionItem value={(repo.repoId).toString()} className='border px-5 rounded-xl mb-5'>
+                    <AccordionItem key={repo.repoId} value={repo.repoId.toString()} className='border px-5 rounded-xl mb-5'>
                         <AccordionTrigger>
                             <div className='flex items-center gap-5'>
-                                <Image src={'/github.png'} alt='github' width={30} height={30} />
+                                <Image src={'/github.svg'} alt='github' width={30} height={30} />
                                 <div className='flex flex-col items-start gap-1'>
                                     <h2> {repo.fullName}</h2>
                                     <p className='text-xs text-gray-500'>

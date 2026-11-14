@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { TestCasesTable, repositories, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { Browserbase } from "@browserbasehq/sdk";
 import { chromium } from "playwright-core";
 
@@ -68,6 +69,23 @@ export async function POST(req: NextRequest) {
             );
         }
 
+        // Browserbase runs in the cloud, so it can never reach a local address
+        try {
+            const host = new URL(/^https?:\/\//i.test(baseUrl) ? baseUrl : `https://${baseUrl}`).hostname;
+            const isLocal =
+                host === "localhost" || host === "0.0.0.0" || host.endsWith(".local") ||
+                /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) ||
+                /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+            if (isLocal) {
+                return NextResponse.json(
+                    { error: `"${host}" is only reachable from your machine, so the cloud browser shows "This site can't be reached". Use a public URL (deploy it, or expose localhost with an ngrok/cloudflared tunnel) as the target domain.` },
+                    { status: 400 }
+                );
+            }
+        } catch {
+            return NextResponse.json({ error: "baseUrl is not a valid URL" }, { status: 400 });
+        }
+
         // 1. Fetch test case from DB
         const [testCase] = await db
             .select()
@@ -114,7 +132,19 @@ export async function POST(req: NextRequest) {
         // 2. Generate script using Claude if forced, or if no script is cached
         if (forceRegenerate) {
             const cookiesStore = await cookies();
-            const githubToken = cookiesStore.get("gh_token")?.value;
+            let githubToken = cookiesStore.get("gh_token")?.value;
+
+            // Fall back to the GitHub token Clerk holds for a GitHub-signed-in user
+            if (!githubToken) {
+                try {
+                    const { userId: clerkId } = await auth();
+                    if (clerkId) {
+                        const client = await clerkClient();
+                        const res = await client.users.getUserOauthAccessToken(clerkId, "github");
+                        githubToken = res.data[0]?.token;
+                    }
+                } catch { }
+            }
 
             if (!githubToken) {
                 return NextResponse.json(

@@ -26,7 +26,11 @@ There is no test runner configured.
   - `repositories`: GitHub repo metadata plus `targetDomain` (default `http://localhost:3000/`) and a global instruction. The column is spelled `gloablInstruction` in code; keep that spelling unless you migrate.
   - `test_cases`: AI-generated cases (title, type, priority, `targetRoute`, `targetFiles`, `expectedResult`), plus Browserbase run state (`browserbaseScript`, `status`, `logs`, `sessionId`, `sessionUrl`).
   - Note that `test_cases.userId` and `repoId` are `varchar`, not FKs to `users`/`repositories`.
-- **Integrations in dependencies:** `@google/genai` (test-case/script generation), `@browserbasehq/sdk` and `playwright-core` (remote browser runs), Stripe, axios. `app/api/github/` is an empty placeholder (`.gitkeep`) for the GitHub integration; the API routes are not yet implemented.
+- **LLM:** Anthropic SDK (`claude-opus-5-5`, needs `ANTHROPIC_API_KEY`) is used for both pipeline steps; `@google/genai` is still in `package.json` but no longer imported.
+  - `app/api/generate-test-cases/routes.tsx` generates test cases via a forced tool call. **The file is named `routes.tsx`, not `route.ts`, so Next will not serve it as an endpoint**; rename it if the endpoint 404s.
+  - `app/api/test-cases/run/route.ts` generates the Playwright script and deducts credits (`70 + tokens/100`, capped at 100, tokens = input + output).
+  - `app/api/test-cases/route.tsx`, `test-cases/settings/route.ts`, `user/route.tsx` are the other routes.
+- **Other integrations:** `@browserbasehq/sdk` and `playwright-core` (remote browser runs), Stripe, axios. `app/api/github/` is an empty placeholder (`.gitkeep`).
 - **UI:**
   - `app/page.tsx` is a large client-side landing page with inline design tokens (`C` object) and hooks.
   - `components/ui/` holds shadcn components (config in `components.json`).
@@ -36,4 +40,4 @@ There is no test runner configured.
 
 ## Environment
 
-Copy `.env.example` to `.env`. Variables: `NEXT_PUBLIC_APP_URL`, Clerk keys and sign-in/up URLs, `DATABASE_URL`. Gemini, Browserbase, Stripe and GitHub credentials are not in the example file; check code for the names once routes exist.
+Copy `.env.example` to `.env`. Variables: `NEXT_PUBLIC_APP_URL`, Clerk keys and sign-in/up URLs, `DATABASE_URL`, `ANTHROPIC_API_KEY`. Browserbase, Stripe and GitHub credentials are not in the example file; grep the routes for their names.

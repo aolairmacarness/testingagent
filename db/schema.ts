@@ -1,4 +1,4 @@
-import { integer, jsonb, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import { bigint, integer, jsonb, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -12,7 +12,7 @@ export const users = pgTable("users", {
 export const repositories = pgTable("repositories", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => users.id).notNull(),
-  repoId: integer("repo_id").notNull(),
+  repoId: bigint("repo_id", { mode: "number" }).notNull(),
   name: text("name").notNull(),
   fullName: text("full_name").notNull(),
   private: integer("private").notNull(),
